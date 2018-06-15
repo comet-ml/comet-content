@@ -11,6 +11,7 @@ For a more in-depth tutorial about Comet.ml, you can check out:
 
 - [Getting started with the Experiment class](https://www.comet.ml/docs/python-sdk/Experiment/#experiment)
 
+- **NEW** [Using fastText and Comet.ml to classify relationships in Knowledge Graphs](https://github.com/comet-ml/comet-content/tree/master/fasttext) using preprocessed data from https://github.com/thunlp/KB2E
 
 
 

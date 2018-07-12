@@ -1,4 +1,5 @@
 from comet_ml import Experiment
+from comet_ml import Optimizer
 
 import os
 import argparse
@@ -21,6 +22,8 @@ from keras.callbacks import TensorBoard
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import hamming_loss
+
+API_KEY = os.environ.get('COMET_API_KEY')
 
 # Converts Freebase MIDS to unique integer tokens
 
@@ -99,7 +102,8 @@ def load_data(n_entities, n_relationships):
     ]
 
     labels = [
-        create_labels(df, classes=list(range(n_relationships))) for df in filtered_dataframes
+        create_labels(df, classes=list(
+            range(n_relationships))) for df in filtered_dataframes
     ]
 
     entity_columns = ['entity_1', 'entity_2']
@@ -134,6 +138,79 @@ def build_model(n_entities,
     return model
 
 
+def train_with_optimizer(suggestion, experiment, args):
+    experiment.log_multiple_params(suggestion)
+
+    n_entities = args.n_entities
+    n_relationships = args.n_relationships
+
+    model = build_model(
+        n_entities=n_entities,
+        n_relationships=n_relationships,
+        embedding_dimension=suggestion['embedding_dimension']
+    )
+
+    optimizer = optimizers.Adam(lr=suggestion['learning_rate'], decay=0.0)
+    model.compile(
+        loss="binary_crossentropy",
+        optimizer=optimizer,
+        metrics=['accuracy']
+    )
+
+    data = load_data(n_entities=n_entities, n_relationships=n_relationships)
+    model.fit(
+        data["train"][0],
+        data["train"][1],
+        verbose=1,
+        epochs=suggestion['epochs'],
+        batch_size=suggestion['batch_size'],
+        shuffle=True,
+        validation_data=data["validation"]
+    )
+    evaluation = model.evaluate(
+        data["test"][0], data["test"][1], verbose=0)
+
+    predictions = model.predict(data["test"][0])
+    auc_score = roc_auc_score(
+        data["test"][1], predictions, average='samples')
+    auc_score_micro = roc_auc_score(
+        data["test"][1], predictions, average='micro')
+
+    metrics = {
+        "evaluation_loss": evaluation[0],
+        "evaluation_accuracy": evaluation[1],
+        "auc_score": auc_score,
+        "auc_score_micro": auc_score_micro
+    }
+    experiment.log_multiple_metrics(metrics)
+
+    return metrics["evaluation_accuracy"]
+
+
+def run_optimizer(args):
+    optimizer = Optimizer(API_KEY)
+    params = """
+    epochs integer [5, 10] [5]
+    batch_size integer [64, 256] [64]
+    learning_rate real [0.0001, 0.01] [0.0001]
+    embedding_dimension integer [25, 200] [25]
+    """
+
+    optimizer.set_params(params)
+    # get_suggestion will raise when no new suggestion is available
+    while True:
+        # Get a suggestion
+        suggestion = optimizer.get_suggestion()
+
+        # Create a new experiment associated with the Optimizer
+        experiment = Experiment(
+            api_key=API_KEY, project_name="fasttext")
+
+        score = train_with_optimizer(suggestion, experiment, args)
+        # Report the score back
+        suggestion.report_score("accuracy", score)
+
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--id', required=True, type=str)
@@ -146,15 +223,14 @@ def get_args():
     parser.add_argument('--output', '-o', default='./checkpoints')
     parser.add_argument('--logdir', '-l', default='./logs')
     parser.add_argument('--use_checkpoint')
+    parser.add_argument('--use_optimizer')
 
     return parser.parse_args()
 
 
-def train():
+def train(args):
     experiment = Experiment(
-        api_key="<YOU API KEY>", project_name="fasttext")
-
-    args = get_args()
+        api_key=API_KEY, project_name="fasttext")
 
     params = {
         "batch_size": args.batch_size,
@@ -238,4 +314,10 @@ def train():
 
 
 if __name__ == '__main__':
-    train()
+    args = get_args()
+
+    if args.use_optimizer:
+        run_optimizer(args)
+
+    else:
+        train(args)
